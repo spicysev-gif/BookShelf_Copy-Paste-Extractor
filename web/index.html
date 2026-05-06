@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bookshelf Extractor</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      max-width: 760px; margin: 2rem auto; padding: 0 1rem;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    .sub { color: #666; margin-top: 0; }
+    textarea {
+      width: 100%; min-height: 280px; font: 12px/1.4 ui-monospace, Menlo, monospace;
+      padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; resize: vertical;
+    }
+    .row { display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; flex-wrap: wrap; }
+    label { font-weight: 600; }
+    button {
+      padding: 0.55rem 1.1rem; font-size: 15px; font-weight: 600;
+      border: 0; border-radius: 6px; background: #2563eb; color: white; cursor: pointer;
+    }
+    button:disabled { background: #999; cursor: wait; }
+    .status { margin-top: 1rem; min-height: 1.5em; }
+    .status.error { color: #b00020; }
+    details { background: #f4f4f6; padding: 0.75rem 1rem; border-radius: 6px; margin: 1rem 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    code { background: #e5e7eb; padding: 0.1em 0.4em; border-radius: 3px; }
+    pre { background: #111; color: #e5e7eb; padding: 0.75rem; border-radius: 6px; overflow: auto; font-size: 12px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      textarea { background: #1c1c1e; color: #eee; border-color: #333; }
+      details { background: #1c1c1e; }
+      code { background: #2c2c2e; }
+      .sub { color: #aaa; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Bookshelf Extractor</h1>
+  <p class="sub">Paste a Bookshelf <code>&lt;section&gt;</code> below and download a clean PDF.</p>
+
+  <details>
+    <summary>How to copy the section from Bookshelf</summary>
+    <ol>
+      <li><b>Right-click directly on the chapter text</b> (not the surrounding page chrome) → <b>Inspect</b>. Bookshelf renders the chapter inside an iframe; right-clicking inside it scopes DevTools to that frame.</li>
+      <li>Switch to the <b>Console</b> tab. (<code>Cmd ⌘ + Option ⌥ + J</code> on Mac, <code>Ctrl + Shift + J</code> on Windows/Linux.)</li>
+      <li>If Chrome shows a "Don't paste code…" warning, type <code>allow pasting</code> and press Enter. (One-time per console session — Chrome's self-XSS protection.)</li>
+      <li>Paste this snippet and press Enter:
+        <pre>(() => {
+  const NS = 'http://www.idpf.org/2007/ops';
+  const findIn = (doc) => {
+    const sections = [...doc.querySelectorAll('section')];
+    return sections.find(s => s.getAttribute('epub:type') === 'division')
+        || sections.find(s => s.getAttributeNS && s.getAttributeNS(NS, 'type') === 'division')
+        || sections.find(s => [...s.attributes].some(a => a.value === 'division'));
+  };
+  const docs = [document];
+  for (const f of document.querySelectorAll('iframe')) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch {}
+  }
+  for (const d of docs) {
+    const hit = findIn(d);
+    if (hit) { copy(hit.outerHTML); return 'Copied ' + (hit.outerHTML.length / 1024 | 0) + ' KB. Paste into the extractor.'; }
+  }
+  const diag = docs.map((d, i) => {
+    const ts = [...new Set([...d.querySelectorAll('section')].map(s => s.getAttribute('epub:type') || '(no epub:type)'))];
+    return 'frame' + i + ': ' + d.querySelectorAll('section').length + ' &lt;section&gt; [' + (ts.slice(0,4).join(', ') || 'none') + ']';
+  }).join(' | ');
+  return 'NOT FOUND. ' + diag;
+})()</pre>
+      </li>
+      <li>If you see <i>Copied …</i>, switch back here and paste (<code>Cmd/Ctrl + V</code>) into the box below.</li>
+    </ol>
+    <p>Still getting <i>NOT FOUND</i>? The chapter iframe may be cross-origin, which the console can't reach. Install the browser extension — it uses <code>chrome.scripting</code> with <code>allFrames: true</code> and bypasses that limit.</p>
+  </details>
+
+  <textarea id="html" placeholder="Paste &lt;section epub:type=&quot;division&quot;&gt;…&lt;/section&gt; here"></textarea>
+
+  <div class="row">
+    <label>Output: <select id="format"><option value="pdf">PDF</option><option value="txt">Text</option></select></label>
+    <label>Mode: <select id="mode"><option value="single">Single section</option><option value="split">Split (multi-section → ZIP)</option></select></label>
+    <button id="go">Convert &amp; download</button>
+  </div>
+  <div id="status" class="status"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+
+    function setStatus(msg, isError = false) {
+      status.textContent = msg;
+      status.classList.toggle("error", isError);
+    }
+
+    async function run() {
+      const html = $("html").value.trim();
+      if (!html) { setStatus("Paste some HTML first.", true); return; }
+
+      const mode = $("mode").value;
+      const format = $("format").value;
+      const btn = $("go");
+      btn.disabled = true;
+      setStatus("Converting…");
+
+      try {
+        const resp = await fetch("/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ html, mode, format }),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          setStatus(`Server ${resp.status}: ${text}`, true);
+          return;
+        }
+        const blob = await resp.blob();
+        const cd = resp.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename="([^"]+)"/);
+        const name = m ? m[1] : (mode === "split" ? "extract.zip" : `extract.${format}`);
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        setStatus(`Downloaded ${name} (${(blob.size/1024).toFixed(1)} KB).`);
+      } catch (err) {
+        setStatus("Network error: " + err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    $("go").addEventListener("click", run);
+  </script>
+</body>
+</html>

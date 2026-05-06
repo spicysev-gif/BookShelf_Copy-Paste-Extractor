@@ -1,7 +1,10 @@
 # Output files
 *.pdf
-*.txt
+*.zip
 !README.md
+
+# Test fixtures (may contain copyrighted textbook content)
+Sample.txt
 
 # Python
 __pycache__/

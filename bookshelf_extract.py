@@ -37,6 +37,7 @@ import re
 import sys
 import os
 import textwrap
+from io import BytesIO
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -459,6 +460,30 @@ def split_sections(raw: str):
         sections.append((name, part))
 
     return sections
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  IN-MEMORY LIBRARY API  (used by the FastAPI backend)
+# ════════════════════════════════════════════════════════════════════════
+
+def html_to_lines(html: str):
+    return build_lines(parse_html(html))
+
+
+def html_to_txt(html: str) -> str:
+    return format_txt(html_to_lines(html))
+
+
+def html_to_pdf_bytes(html: str) -> bytes:
+    buf = BytesIO()
+    format_pdf(html_to_lines(html), buf)
+    return buf.getvalue()
+
+
+def split_to_pdf_bytes(html: str):
+    """Split on <section> and yield (name, pdf_bytes) for each section."""
+    for name, section_html in split_sections(html):
+        yield name, html_to_pdf_bytes(section_html)
 
 
 # ════════════════════════════════════════════════════════════════════════
