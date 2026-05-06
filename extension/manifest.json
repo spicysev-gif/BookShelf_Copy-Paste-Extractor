@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Bookshelf Extractor",
+  "name": "tingu-bacchis-bookshelf-extractor",
   "version": "0.1.0",
   "description": "Extract a Bookshelf chapter section as a clean PDF or text file.",
   "permissions": ["scripting", "activeTab", "downloads", "storage"],
